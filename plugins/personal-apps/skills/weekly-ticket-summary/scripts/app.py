@@ -32,6 +32,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -129,15 +130,74 @@ def _report_one(spec, rt, run, data: Path) -> str:
                       *[f"- {p}" for p in w["problems"][:12]]]
         submit = (f"app.py submit {run.workflow}.{w['step']} OUTPUT.json --agent <your name>" if str(run.by).startswith("agent:")
                   else f"app.py submit {run.row['_row']} {w['step']} OUTPUT.json")
-        lines += [f"Read it, write the output as JSON in the `shape` it gives (a list of rows), keeping to its `rules`, then run: {submit}",
+        lines += [f"Read it (its `inputs` are only in the file), write the output as JSON in the `shape` it gives (a list of rows), "
+                  f"keeping to its `rules`, then run: {submit}",
                   "", json.dumps({k: w["task"][k] for k in ("task", "instructions", "rules", "params", "shape")}, ensure_ascii=False)]
         return "\n".join(lines)
     load = run.load or rt.current_load()
     if load and spec["workflows"][run.workflow]["steps"][0]["type"] == "load":
         missing = load.get("columns_missing") or []
-        return (f"Loaded the {spec['period'].get('label', '{period}').replace('{period}', load['period'])}: {load.get('rows_read')} rows read, "
-                f"{load.get('rows_skipped')} skipped" + (f", columns missing: {', '.join(missing)}" if missing else ", no columns missing") + ".")
-    return f"Done: {spec['workflows'][run.workflow].get('title', run.workflow)}."
+        # the main flow's next workflow, unless the load already went on into it (an `after` trigger)
+        order = spec["skill"].get("order") or []
+        nxt = order[order.index(run.workflow) + 1] if run.workflow in order[:-1] else None
+        chained = nxt and any(a.workflow == nxt for a in getattr(run, "after", []))
+        return (f"Loaded the {loaded_as(spec, rt, load)}: {load.get('rows_read')} rows read, "
+                f"{load.get('rows_skipped')} skipped" + (f", columns missing: {', '.join(missing)}" if missing else ", no columns missing") + "."
+                + (f"\nNext: `app.py run {nxt}`." if nxt and not chained and not str(run.by).startswith("agent:") else ""))
+    done = f"Done: {spec['workflows'][run.workflow].get('title', run.workflow)}."
+    if str(run.by).startswith("agent:"):
+        return done
+    # the command that shows what this run made (build.py writes skill.show from skill.py's `shows`)
+    target = (spec["skill"].get("show") or {}).get(run.workflow) or spec["skill"].get("output_page")
+    return done + (f"\nNext: `app.py show {target}`." if target else "")
+
+
+def _dates(spec, rt, load) -> tuple[str, str] | None:
+    """The first and last date in a load's rows (its first table with a date field, a required one first)."""
+    for t, d in spec["tables"].items():
+        if d.get("scope") == "app":
+            continue
+        dated = [f for f, fd in d["fields"].items() if fd.get("type") in ("date", "datetime")]
+        f = next((f for f in dated if d["fields"][f].get("required")), dated[0] if dated else None)
+        vals = sorted(str(r[f])[:10] for r in rt.store.rows(t, load) if r.get(f)) if f else []
+        if vals:
+            return vals[0], vals[-1]
+    return None
+
+
+def _noun(spec) -> str | None:
+    """A load period's noun, from its label ("statement of {period}" -> "statement")."""
+    m = re.fullmatch(r"\s*([A-Za-z][A-Za-z ]*?) of \{period\}\s*", spec["period"].get("label") or "")
+    return m.group(1) if spec["period"].get("unit") == "load" and m else None
+
+
+def loaded_as(spec, rt, load, status: bool = False) -> str:
+    """What a load holds, in words. A load period is the day it was loaded, not the data's: "statement of 2026-10-30"
+    read as the statement's date (B-133), so a load period names the dates its rows cover."""
+    label = spec["period"].get("label", "{period}").replace("{period}", load["period"])
+    noun, dates = _noun(spec), _dates(spec, rt, load)
+    if noun is None or dates is None:
+        return label
+    span = dates[0] if dates[0] == dates[1] else f"{dates[0]} to {dates[1]}"
+    return f"{noun} loaded {load['period']}, dates {span}" if status else f"{noun} (dates {span})"
+
+
+def accepted(store, run_row: int, step: str) -> str:
+    """The line a submit prints first: whether the app took the output (B-133: a pass printed nothing of its own)."""
+    out = next((o for o in store.sys("ai_outputs") if o["run"] == run_row and o["step"] == step), None)
+    if out is None:
+        return ""  # sent back: the problems follow
+    n = len(out["value"] or [])
+    rows = "" if out["task"] == "summarize" else f" ({n} {'row' if n == 1 else 'rows'})"
+    # a second miss: a view fallback replaces it, or keep_valid keeps the rows that passed (its state can still read
+    # "retried"); the problems it kept say which
+    if out["filled_by"] == "fallback":
+        return f"Not accepted twice: the app used its own version of `{step}`.\n\n"
+    if out.get("problems") and not n:
+        return f"Not accepted twice: `{step}` is left empty.\n\n"
+    if out.get("problems"):
+        return f"Accepted in part: kept the {n} {'row' if n == 1 else 'rows'} of `{step}` that passed; the others were left out.\n\n"
+    return f"Accepted: `{step}`{rows}.\n\n"
 
 
 def cmd_sample(spec, rt, store, rest, as_of, period, data):
@@ -182,7 +242,7 @@ def cmd_submit(spec, rt, store, rest, as_of, period, data):
         value = value["rows"]
     store.submit_ai(run_row, step, value)
     run = rt.resume(run_row)
-    return report_run(spec, rt, run, data)
+    return accepted(store, run_row, step) + report_run(spec, rt, run, data)
 
 
 def cmd_show(spec, rt, store, rest, as_of, period, data):
@@ -262,8 +322,8 @@ def cmd_map(spec, rt, store, rest, as_of, period, data):
 
 def cmd_status(spec, rt, store, rest, as_of, period, data):
     load = rt.current_load(period)
-    lines = [f"{spec['title']}: " + (f"{spec['period'].get('label', '{period}').replace('{period}', load['period'])}, "
-                                     f"{load.get('rows_read')} rows ({load['kind']})" if load else "no data yet")]
+    lines = [f"{spec['title']}: " + (f"{loaded_as(spec, rt, load, status=True)}, {load.get('rows_read')} rows ({load['kind']})"
+                                     if load else "no data yet")]
     for r in store.sys("runs"):
         if r["state"] in ("waiting_ai", "waiting_approval"):
             lines.append(f"- run {r['_row']} ({r['workflow']}): {r['state'].replace('_', ' ')}")
@@ -352,7 +412,8 @@ def ag_submit(spec, rt, tools, agent, rest, period, data):
         die(f"that isn't JSON: {e}")
     if isinstance(value, dict) and isinstance(value.get("rows"), list):
         value = value["rows"]
-    return report_run(spec, rt, tools.fill(agent, target, value, run), data)
+    got = tools.fill(agent, target, value, run)
+    return accepted(rt.store, got.row["_row"], target.partition(".")[2]) + report_run(spec, rt, got, data)
 
 
 def ag_run(spec, rt, tools, agent, rest, period, data):

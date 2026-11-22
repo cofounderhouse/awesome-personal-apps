@@ -2,7 +2,7 @@
 name: weekly-ticket-summary
 description: Turns last week's support ticket export (CSV or pasted rows) into a short weekly summary a support team can read in two minutes, with tickets grouped by theme and counted, one real ticket quoted per theme, and urgent or overdue tickets listed first with how long they have waited. Use when someone shares a help desk export and asks for a weekly ticket summary, review, digest or triage.
 metadata:
-  version: 1.2.7
+  version: 1.2.8
 compatibility: Runs a small Python script with uv (or python3). Reads only the files you give it; no network.
 ---
 
@@ -23,6 +23,7 @@ You turn one week of support tickets into a summary the team actually reads. A p
   - Claude Code: `uv run --managed-python "${CLAUDE_SKILL_DIR}/scripts/app.py" <command>`
   - Elsewhere, use the path of this skill's folder in place of `${CLAUDE_SKILL_DIR}`. Without `uv`, run the same file with `python3` (Windows: `py`).
   - Run it as one plain command with the full path: no `cd`, no shell variables, so the user sees exactly what runs.
+  - The app prints its next command in short (`app.py submit …`, `app.py show …`): run that as the same full command.
 
 ## What to do
 
@@ -32,12 +33,12 @@ You turn one week of support tickets into a summary the team actually reads. A p
    - `themes` (group): put every row in exactly one group; for each row give `group` (a short plain name) and `key`. Put every ticket in exactly one theme by what it's about. If the category field already groups them well, use the category names.
    - `quotes` (pick_quote): for each group, pick one row and copy a short phrase from its text word for word: `group`, `key`, `quote`. Pick the short phrase, word for word from one ticket's message, that best shows the theme's pattern.
    - `summary` (summarize): write the `text` in the sentence range asked; use only numbers that appear in the inputs. Three to five sentences a team lead could read out at the Monday stand-up: the biggest theme, what stands out, what needs a reply today. Use only numbers from the inputs.
-   For each one: read the task file (instructions, rules, inputs, output `shape`), write the output as a JSON list of rows, then `app.py submit <run> <step> OUTPUT.json`. If it prints problems, fix exactly those and submit once more; after a second miss the app uses its own version.
+   For each one: read the task file (instructions, rules, inputs, output `shape`), write the output as a JSON list of rows, then `app.py submit <run> <step> OUTPUT.json`. If it prints problems, fix exactly those and submit once more; after a second miss the app uses its own version. A submit that passes says `Accepted` and prints the next AI step; after the last one it prints `Done: Name themes and write the summary.` and the next command (`app.py show report`).
 3. **Show it.** `app.py show report`, and print the markdown exactly as it is.
 
 When the user asks for more:
-- **Draft replies for urgent:** `app.py run draft_replies`, then the same AI steps loop, then `app.py show summary`.
-- **Write escalation note:** `app.py run escalation_note`, then the same AI steps loop, then `app.py show summary`.
+- **Draft replies for urgent:** `app.py run draft_replies`, then the same AI steps loop, then `app.py show urgent`.
+- **Write escalation note:** `app.py run escalation_note`, then the same AI steps loop, then `app.py show escalation`.
 - **Mark one done or snoozed:** `app.py mark <id> done` (or `snoozed --for 1d`, or `open`).
 
 ## App agents
@@ -56,7 +57,6 @@ This app has 4 app agents, each with its own generated instructions and tools; `
 - **Approvals:** what an agent proposes, and anything a run it started would save, waits in `app.py show approvals`; run `app.py approve <n>` or `reject <n>` only after the user says which.
 
 When the user asks:
-- To **name themes and write the summary** (Weekly summary): start `weekly-ticket-summary-triage` with "Name the themes and flag the tickets for the {period}, then hand the quotes to the drafter and the summary to the reporter." (`{period}`: the period `app.py status` shows).
 - To **write escalation note** (Weekly summary): start `weekly-ticket-summary-reporter` with "Write the escalation note for my manager for the {period}." (`{period}`: the period `app.py status` shows).
 - To ask about one row of **urgent_queue1** (Urgent queue): start `weekly-ticket-summary-drafter` with the note `{period, keys: [<the row's id>]}`.
 - To **draft replies for urgent** (Urgent queue): start `weekly-ticket-summary-drafter` with "Draft replies for the open urgent tickets in the {period}." (`{period}`: the period `app.py status` shows).

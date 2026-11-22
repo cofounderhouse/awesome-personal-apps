@@ -1,6 +1,6 @@
 """osgen app-agent tools (plans/osgen/agents.md §3–§5), Python reference; runtime/js/agents.ts is the same code.
 
-One method set every app format exposes: the agent plugins through `app.py <command> --agent <name>`, the h1902y OS
+One method set every app format exposes: the agent plugins through `app.py <command> --agent <name>`, the Cofounder House OS
 through `env.APP` (its store calls the JS port). Every method first checks the calling agent's allowlist (its
 `reads` and `tools`) and refuses in plain words (`Refused`); the hard line is still approvals: runs an agent starts
 hold their saves, `propose` only creates an approvals row, `fill` writes only drafts (ai_outputs), and handoff and

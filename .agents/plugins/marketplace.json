@@ -1,14 +1,14 @@
 {
   "name": "personal-apps",
   "interface": {
-    "displayName": "Personal apps (h1902y)"
+    "displayName": "Personal apps (Cofounder House)"
   },
   "plugins": [
     {
       "name": "weekly-ticket-summary",
       "source": {
         "source": "url",
-        "url": "https://github.com/h1902y/weekly-ticket-summary.git"
+        "url": "https://github.com/cofounderhouse/weekly-ticket-summary.git"
       },
       "policy": {
         "installation": "AVAILABLE",

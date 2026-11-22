@@ -1,6 +1,6 @@
 """osgen workflow runner, Python reference (plans/osgen/workflow.md). Runs a checked spec's workflows over a store:
 load → map → validate → save, and ai → check → approve with waits. The agent plugins use it through `app`, osgen
-uses it for golden; runtime/js/runner.ts is the same code for the h1902y OS. Steps never read the clock: `as_of`
+uses it for golden; runtime/js/runner.ts is the same code for the Cofounder House OS. Steps never read the clock: `as_of`
 comes with the trigger.
 """
 from __future__ import annotations
@@ -359,15 +359,19 @@ class Runtime:
     def task_file(self, run: Run, step: dict, problems: list | None = None) -> dict:
         inputs = self._inputs(run, step)
         ins = step["in"] if isinstance(step["in"], list) else [step["in"]]
-        shown = []
+        # named, and only what the task reads: its views, and an earlier step's output a param names (pick_quote's
+        # grouping). Any other earlier step in `in` only orders the run (workflow.md §1); its rows are already in the
+        # views, so showing them again echoed the AI's own earlier answers (B-133).
+        shown = {}
         pct = K.pct_fields(self.spec)
         for ref, i in zip(ins, inputs):
+            if not ref.startswith("view:") and ref != step.get("grouping"):
+                continue
             if isinstance(i, list):
                 # money and percents as people read them (4,900.00 USD, 20%): the filler writes what it sees
                 out = (self.spec["views"][ref[5:]].get("out") or {}) if ref.startswith("view:") else {}
-                shown.append([{k: K.as_read(self.spec, out, k, v, pct) for k, v in r.items() if not k.startswith("_")} for r in i])
-            else:
-                shown.append(i)
+                i = [{k: K.as_read(self.spec, out, k, v, pct) for k, v in r.items() if not k.startswith("_")} for r in i]
+            shown[ref[5:] if ref.startswith("view:") else ref] = i
         body = {"workflow": run.workflow, "step": step["id"], "task": step["task"], "instructions": step["instructions"],
                 "rules": K.task_rules(self.spec, self.spec["workflows"][run.workflow]["steps"], step),
                 "params": {k: v for k, v in step.items() if k not in ("id", "type", "in", "task", "instructions")},
